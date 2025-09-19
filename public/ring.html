@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Timbre</title>
+</head>
+<body>
+  <h1>🚪 Timbre</h1>
+  <button onclick="tocarTimbre()">Tocar Timbre</button>
+
+  <script>
+    async function tocarTimbre() {
+      const res = await fetch("/api/sendTimbre", {
+        method: "POST",
+      });
+      const data = await res.json();
+      console.log(data);
+      alert(data.success ? "🔔 Timbre enviado!" : "Error");
+    }
+  </script>
+</body>
+</html>
