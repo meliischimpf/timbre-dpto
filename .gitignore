@@ -39,3 +39,6 @@ yarn-error.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Service account credentials
+service-account.json
