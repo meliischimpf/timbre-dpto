@@ -9,15 +9,17 @@ const { playDoorbell } = require("../utils/doorbell");
 
 // ID único para este dispositivo
 const generateDeviceId = () => {
-  if (typeof window !== 'undefined') {
-    let deviceId = localStorage.getItem('deviceId');
-    if (!deviceId) {
-      deviceId = 'device-' + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem('deviceId', deviceId);
-    }
-    return deviceId;
+  // Solo intentar acceder a localStorage en el cliente
+  if (typeof window === 'undefined') {
+    return 'device-temp-' + Math.random().toString(36).substr(2, 9);
   }
-  return 'device-' + Math.random().toString(36).substr(2, 9);
+  
+  let deviceId = localStorage.getItem('deviceId');
+  if (!deviceId) {
+    deviceId = 'device-' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('deviceId', deviceId);
+  }
+  return deviceId;
 };
 
 export default function Home() {
@@ -220,9 +222,12 @@ export default function Home() {
   };
 
   // URL del timbre con el ID del dispositivo
-  const doorbellUrl = typeof window !== 'undefined' 
-    ? `${window.location.origin}?deviceId=${encodeURIComponent(deviceId)}`
-    : '';
+  const [doorbellUrl, setDoorbellUrl] = useState('');
+  
+  useEffect(() => {
+    // Este código solo se ejecuta en el cliente
+    setDoorbellUrl(`${window.location.origin}?deviceId=${encodeURIComponent(deviceId)}`);
+  }, [deviceId]);
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">

@@ -2,6 +2,30 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
+  compress: false,
+  generateEtags: false,
+  poweredByHeader: false,
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: '/api/:path*',
+      },
+    ];
+  },
+  async headers() {
+    return [
+      {
+        source: '/_next/static/:path*',
+        headers: [
+          { 
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+    ];
+  },  
   experimental: {
     esmExternals: false,
   },

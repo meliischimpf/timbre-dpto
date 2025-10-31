@@ -1,176 +1,214 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/router';
+import QRCode from 'qrcode.react';
+import Head from 'next/head';
 
-export default function TestWebSocket({ isSocketConnected, socket }) {
-  const [messages, setMessages] = useState([]);
-  const [roomId, setRoomId] = useState('sala-1'); // Valor por defecto
+// Función para reproducir el sonido
+const playDoorbellSound = () => {
+  try {
+    const audio = new Audio('/sounds/doorbell.mp3');
+    audio.play().catch(error => {
+      console.error('🔇 Error al reproducir el sonido:', error);
+    });
+  } catch (error) {
+    console.error('🔇 Error al cargar el sonido:', error);
+  }
+};
+
+export default function TestWebSocket() {
+  const [socket, setSocket] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [roomId, setRoomId] = useState('');
+  const [message, setMessage] = useState('');
+  const router = useRouter();
+  const socketRef = useRef(null);
   const [currentRoom, setCurrentRoom] = useState('');
-  const [isJoining, setIsJoining] = useState(false);
+  const [messages, setMessages] = useState([]);
 
-  // Función para agregar mensajes al registro
-  const addMessage = (message) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setMessages(prev => [...prev, { 
-      id: Date.now(), 
-      text: `[${timestamp}] ${message}`,
-      timestamp
-    }]);
-  };
-
+  // Generar un ID de sala aleatorio al cargar
   useEffect(() => {
-    if (socket) {
-      // Escuchar mensajes de bienvenida
-      const onWelcome = (data) => {
-        addMessage(`✅ Conectado al servidor WebSocket`);
-        addMessage(`ID de conexión: ${socket.id}`);
-      };
+    if (typeof window !== 'undefined' && !roomId) {
+      const savedRoomId = localStorage.getItem('roomId');
+      if (savedRoomId) {
+        setRoomId(savedRoomId);
+        setCurrentRoom(savedRoomId);
+      } else {
+        const newRoomId = `sala-${Math.random().toString(36).substring(2, 8)}`;
+        localStorage.setItem('roomId', newRoomId);
+        setRoomId(newRoomId);
+        setCurrentRoom(newRoomId);
+      }
+    }
+  }, []);
 
-      // Escuchar confirmación de unión a sala
-      const onJoinResponse = (response) => {
-        if (response.success) {
-          setCurrentRoom(roomId);
-          addMessage(`✅ Unido a la sala: ${roomId}`);
-        } else {
-          addMessage(`❌ Error al unirse a la sala: ${response.error || 'Error desconocido'}`);
+  // Conectar al WebSocket
+  useEffect(() => {
+    if (!roomId) return;
+
+    // Usar wss:// solo en producción, ws:// en desarrollo
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socketInstance = new WebSocket(`${protocol}//${window.location.host}/api/socket`);
+    
+    socketRef.current = socketInstance;
+
+    const handleOpen = () => {
+      console.log('✅ Conectado al servidor WebSocket');
+      setIsConnected(true);
+      
+      // Unirse a la sala
+      socketInstance.send(JSON.stringify({
+        type: 'join',
+        roomId: roomId
+      }));
+    };
+
+    const handleMessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('📨 Mensaje recibido:', data);
+        
+        if (data.type === 'ring') {
+          playDoorbellSound();
+          setMessage('🔔 ¡Timbre sonando!');
+          setTimeout(() => setMessage(''), 2000);
         }
-        setIsJoining(false);
-      };
+      } catch (error) {
+        console.error('Error al procesar el mensaje:', error);
+      }
+    };
 
-      // Escuchar eventos de timbre
-      const onTimbre = (data) => {
-        addMessage(`🔔 ¡Timbre sonando! (${new Date(data.timestamp).toLocaleTimeString()})`);
-        // Reproducir sonido
-        playSound();
-      };
+    const handleClose = () => {
+      console.log('❌ Desconectado del servidor');
+      setIsConnected(false);
+    };
 
-      // Configurar listeners
-      socket.on('connect', onWelcome);
-      socket.on('unirse-sala-response', onJoinResponse);
-      socket.on('timbre', onTimbre);
+    const handleError = (error) => {
+      console.error('❌ Error en la conexión WebSocket:', error);
+      setMessage('❌ Error de conexión');
+      setTimeout(() => setMessage(''), 2000);
+    };
 
-      // Limpiar listeners al desmontar
-      return () => {
-        socket.off('connect', onWelcome);
-        socket.off('unirse-sala-response', onJoinResponse);
-        socket.off('timbre', onTimbre);
-      };
-    }
-  }, [socket, roomId]);
+    socketInstance.addEventListener('open', handleOpen);
+    socketInstance.addEventListener('message', handleMessage);
+    socketInstance.addEventListener('close', handleClose);
+    socketInstance.addEventListener('error', handleError);
 
-  // Función para reproducir sonido de timbre
-  const playSound = () => {
-    try {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+    setSocket(socketInstance);
+
+    return () => {
+      socketInstance.removeEventListener('open', handleOpen);
+      socketInstance.removeEventListener('message', handleMessage);
+      socketInstance.removeEventListener('close', handleClose);
+      socketInstance.removeEventListener('error', handleError);
       
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(1200, audioContext.currentTime + 0.1);
-      
-      gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.start();
-      oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (error) {
-      console.error('Error al reproducir sonido:', error);
-      addMessage('🔇 No se pudo reproducir el sonido (el navegador puede estar silenciado)');
-    }
-  };
+      if (socketInstance.readyState === WebSocket.OPEN) {
+        socketInstance.close();
+      }
+    };
+  }, [roomId]);
 
   // Manejar unión a sala
   const handleJoinRoom = (e) => {
     e?.preventDefault();
-    if (roomId && socket && !isJoining) {
-      setIsJoining(true);
-      addMessage(`Intentando unirse a la sala: ${roomId}...`);
-      socket.emit('unirse-sala', roomId);
+    if (roomId && socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: 'join',
+        roomId: roomId
+      }));
+      setCurrentRoom(roomId);
+      localStorage.setItem('roomId', roomId);
+      setMessage(`✅ Unido a la sala: ${roomId}`);
+      
+      // Agregar mensaje al registro
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        text: `✅ Unido a la sala: ${roomId}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+      
+      setTimeout(() => setMessage(''), 3000);
     }
   };
 
   // Manejar activación del timbre
-  const handleRing = (e) => {
-    e?.preventDefault();
-    if (currentRoom && socket) {
-      const data = {
-        room: currentRoom,
-        message: '¡Timbre sonando!',
-        timestamp: new Date().toISOString()
-      };
-      socket.emit('timbre', data);
-      addMessage(`🔔 Timbre activado en sala: ${currentRoom}`);
-      playSound();
-    } else {
-      addMessage('❌ Únete a una sala primero');
+  const handleRing = useCallback(() => {
+    try {
+      const currentSocket = socketRef.current || socket;
+      
+      if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+        currentSocket.send(JSON.stringify({
+          type: 'ring',
+          roomId: roomId,
+          timestamp: new Date().toISOString()
+        }));
+        setMessage('🔔 Timbre activado');
+        setTimeout(() => setMessage(''), 2000);
+      } else {
+        console.error('WebSocket no está conectado. Estado:', currentSocket?.readyState);
+        setMessage('❌ Error: No hay conexión');
+        setTimeout(() => setMessage(''), 2000);
+        
+        // Intentar reconectar
+        if (roomId) {
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const newSocket = new WebSocket(`${protocol}//${window.location.host}/api/socket`);
+          setSocket(newSocket);
+          socketRef.current = newSocket;
+        }
+      }
+    } catch (error) {
+      console.error('Error al activar el timbre:', error);
+      setMessage('❌ Error al activar el timbre');
+      setTimeout(() => setMessage(''), 2000);
     }
-  };
+  }, [socket, roomId]);
 
   // Manejar cambio de ID de sala
   const handleRoomIdChange = (e) => {
     setRoomId(e.target.value);
   };
 
+  const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
+
   return (
     <div className="min-h-screen bg-gray-100 p-4 md:p-8">
+      <Head>
+        <title>Timbre Dpto - {currentRoom || 'Sin sala'}</title>
+        <meta name="description" content="Sistema de timbre para departamento" />
+      </Head>
+      
       <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-md overflow-hidden">
-        {/* Encabezado */}
         <div className="bg-blue-600 text-white p-4">
-          <h1 className="text-2xl font-bold">Prueba de Timbre Web</h1>
+          <h1 className="text-2xl font-bold">Timbre de Departamento</h1>
           <div className="flex items-center mt-2">
-            <span className={`inline-block w-3 h-3 rounded-full mr-2 ${isSocketConnected ? 'bg-green-400' : 'bg-red-400'}`}></span>
+            <span className={`inline-block w-3 h-3 rounded-full mr-2 ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></span>
             <span className="text-sm">
-              {isSocketConnected ? 'Conectado al servidor' : 'Desconectado'}
-              {socket?.id && ` (ID: ${socket.id.substring(0, 8)}...)`}
+              {isConnected ? 'Conectado al servidor' : 'Desconectado'}
             </span>
           </div>
         </div>
         
         {/* Contenido principal */}
         <div className="p-4 md:p-6">
-          {/* Formulario de conexión */}
-          <form onSubmit={handleJoinRoom} className="mb-6 bg-blue-50 p-4 rounded-lg">
-            <h2 className="text-lg font-semibold mb-3 text-blue-800">Conectar a una sala</h2>
-            
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="flex-1">
-                <label htmlFor="roomId" className="block text-sm font-medium text-gray-700 mb-1">ID de la sala</label>
-                <input
-                  id="roomId"
-                  type="text"
-                  value={roomId}
-                  onChange={handleRoomIdChange}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Ej: sala-1"
-                />
-              </div>
-              <div className="mt-auto">
-                <button
-                  type="submit"
-                  disabled={!isSocketConnected || isJoining || !roomId.trim()}
-                  className="w-full sm:w-auto bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isJoining ? 'Conectando...' : 'Unirse'}
-                </button>
-              </div>
-            </div>
-            
+          {/* Estado de conexión */}
+          <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+            <p className="text-center text-blue-800 font-medium">
+              {isConnected ? '🟢 Conectado' : '🔴 Desconectado'}
+            </p>
             {currentRoom && (
-              <div className="mt-3 p-2 bg-green-50 text-green-800 text-sm rounded border border-green-200">
-                ✅ Conectado a: <span className="font-mono font-bold">{currentRoom}</span>
-              </div>
+              <p className="text-center text-sm text-gray-600 mt-1">
+                Sala: {currentRoom}
+              </p>
             )}
-          </form>
-          
+          </div>
+
           {/* Botón de timbre */}
           <div className="mb-6 text-center">
             <button
               onClick={handleRing}
-              disabled={!isSocketConnected || !currentRoom}
+              disabled={!isConnected || !currentRoom}
               className={`px-8 py-4 text-xl font-bold rounded-full shadow-lg transition-all transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300 ${
-                isSocketConnected && currentRoom 
+                isConnected && currentRoom 
                   ? 'bg-green-500 hover:bg-green-600 text-white' 
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               }`}
@@ -183,9 +221,45 @@ export default function TestWebSocket({ isSocketConnected, socket }) {
                 : 'Haz clic para tocar el timbre en esta sala'}
             </p>
           </div>
+
+          {message && (
+            <div className="mb-6 p-3 bg-yellow-100 text-yellow-800 rounded-lg text-center">
+              {message}
+            </div>
+          )}
+          
+          {/* Botón para volver al inicio */}
+          <div className="flex justify-center mb-6">
+            <button
+              onClick={() => router.push('/')}
+              className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              Volver al inicio
+            </button>
+          </div>
+          {/* Código QR para compartir */}
+          <div className="border-t border-gray-200 pt-6 mt-6">
+            <h2 className="text-lg font-semibold mb-3 text-center">Compartir acceso</h2>
+            <div className="flex flex-col items-center">
+              <div className="p-2 bg-white rounded-lg border border-gray-200">
+                <QRCode 
+                  value={currentUrl} 
+                  size={180}
+                  level="H"
+                  includeMargin={true}
+                />
+              </div>
+              <p className="mt-3 text-sm text-gray-600 text-center">
+                Escanea este código con otro dispositivo para conectar
+              </p>
+              <div className="mt-3 p-2 bg-gray-50 rounded-lg w-full">
+                <p className="text-xs text-gray-500 break-all">{currentUrl}</p>
+              </div>
+            </div>
+          </div>
           
           {/* Registro de eventos */}
-          <div className="border-t border-gray-200 pt-4">
+          <div className="border-t border-gray-200 pt-6 mt-6">
             <div className="flex justify-between items-center mb-2">
               <h2 className="text-lg font-semibold">Registro de eventos</h2>
               <button 
@@ -197,9 +271,9 @@ export default function TestWebSocket({ isSocketConnected, socket }) {
               </button>
             </div>
             
-            <div className="bg-gray-50 p-3 rounded-md h-64 overflow-y-auto font-mono text-sm">
+            <div className="bg-gray-50 p-3 rounded-md h-48 overflow-y-auto font-mono text-sm">
               {messages.length === 0 ? (
-                <div className="text-gray-400 h-full flex items-center justify-center">
+                <div className="text-gray-400 h-full flex items-center justify-center text-center">
                   Los eventos de conexión aparecerán aquí
                 </div>
               ) : (
@@ -214,7 +288,7 @@ export default function TestWebSocket({ isSocketConnected, socket }) {
                       }`}
                     >
                       <span className="text-gray-500 mr-2">[{msg.timestamp}]</span>
-                      <span dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br/>') }} />
+                      <span>{msg.text}</span>
                     </li>
                   ))}
                 </ul>
